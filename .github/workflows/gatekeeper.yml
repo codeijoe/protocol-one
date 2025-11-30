@@ -1,0 +1,136 @@
+name: Codeijoe Gatekeeper
+
+# Trigger pada Pull Request ke branch main
+on:
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+  pull-requests: write # WAJIB: Izin untuk Bot memberi label, komen, dan menutup PR
+  issues: write
+
+jobs:
+  validate-submission:
+    name: Verify Challenger's Work
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # STEP 1: ANTI-CHEAT (Polisi Integritas)
+      # ---------------------------------------------------------
+      - name: Detect Cheating (Test Modification)
+        id: anti_cheat
+        uses: tj-actions/changed-files@v41
+        with:
+          files: tests/**
+          
+      - name: Block Cheaters
+        if: steps.anti_cheat.outputs.any_changed == 'true'
+        run: |
+          echo "::error title=Platform Integrity Violated::You modified the test files! CHEATING DETECTED."
+          exit 1
+
+      # ---------------------------------------------------------
+      # STEP 2: BUILD & TEST (Ujian Kompetensi)
+      # ---------------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          
+      - name: Install Dependencies
+        run: npm ci
+        
+      - name: Run The Gauntlet
+        id: run_tests
+        run: npm test > test-results.txt 2>&1
+        continue-on-error: true
+
+      # ---------------------------------------------------------
+      # STEP 3: AUTOMATED JUDGMENT & CLOSURE (Hakim Robot)
+      # ---------------------------------------------------------
+      - name: Judge & Close
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let testResult = '';
+            try {
+              testResult = fs.readFileSync('test-results.txt', 'utf8');
+            } catch (e) {
+              testResult = 'Test output missing.';
+            }
+            
+            const outcome = '${{ steps.run_tests.outcome }}';
+            let body = '';
+            
+            if (outcome === 'success') {
+              // --- SKENARIO LULUS (VERIFIED CLOSE) ---
+              body = '### ✅ MISSION ACCOMPLISHED\n\n' +
+                     '**Target Verified.** Excellent work, Challenger.\n\n' +
+                     '🔒 **PROTOCOL:** This PR will now be automatically **CLOSED** to prevent solution leakage to the main branch.\n' +
+                     '🏆 **TROPHY:** This PR URL is your permanent **Proof of Work**. You may pin it to your profile as evidence of your engineering judgment.';
+              
+              // 1. Beri Label Penghargaan
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  labels: ['mission-completed', 'verified']
+                });
+              } catch (e) {}
+
+              // 2. Post Komentar Final
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+
+              // 3. TUTUP PR (Auto-Close)
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                state: 'closed'
+              });
+              
+            } else {
+              // --- SKENARIO GAGAL ---
+              body = '### ❌ MISSION FAILED\n\n' +
+                     'System status: **REJECTED**.\n' +
+                     'Your code did not pass the automated tests. Check the logs below:\n\n' +
+                     '<details><summary>Expand Test Logs</summary>\n\n' +
+                     '```\n' + testResult.slice(0, 2000) + '...\n```\n' +
+                     '\n</details>\n' +
+                     '\n**Action Required:** Fix your code and push again. Do not ask for review until this turns Green.';
+              
+              // Hapus label jika ada sisa dari percobaan sebelumnya
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  name: 'mission-completed'
+                });
+              } catch (e) {}
+              
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+      - name: Fail Workflow if Tests Failed
+        if: steps.run_tests.outcome != 'success'
+        run: exit 1
