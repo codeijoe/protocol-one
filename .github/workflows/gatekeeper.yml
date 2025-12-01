@@ -2,7 +2,7 @@ name: Codeijoe Gatekeeper
 
 # Trigger pada Pull Request ke branch main
 on:
-  pull_request:
+  pull_request_target:
     branches: [ "main" ]
     paths:
       - 'src/**'
@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       # ---------------------------------------------------------
       # STEP 1: ANTI-CHEAT (Polisi Integritas)
